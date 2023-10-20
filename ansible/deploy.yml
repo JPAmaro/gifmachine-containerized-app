@@ -1,0 +1,21 @@
+---
+
+- hosts: localhost
+  tasks:
+    - name: Set facts
+      include_tasks: tasks/facts.yml
+
+    - name: Build and push Docker image to ECR
+      include_tasks: tasks/build_and_push.yml
+
+    - name: Deploy to ECS
+      include_tasks: tasks/deploy_ecs.yml
+
+    - name: Check service health
+      include_tasks: tasks/service_health_check.yml
+
+    - name: Check task health
+      include_tasks: tasks/task_health_check.yml
+
+    - debug:
+        msg: "Browse to http://{{ instance_public_ip }}:{{ gifmachine_api_port }}"

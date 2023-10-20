@@ -1,0 +1,49 @@
+---
+
+- name: Check task health
+  block:
+    - name: Set the retry count
+      set_fact:
+        task_retry_count: "{{ 1 if task_retry_count is undefined else task_retry_count | int + 1 }}"
+
+    - name: Get task list
+      shell: aws ecs list-tasks --cluster {{ gifmachine_cluster }} --query 'taskArns[0]' --service-name {{ gifmachine_service }}
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ lookup('env', 'TF_VAR_aws_access_key') }}"
+        AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'TF_VAR_aws_secret_key') }}"
+      register: ecs_task_output
+
+    - name: Get task status
+      shell: aws ecs describe-tasks --cluster {{ gifmachine_cluster }} --tasks {{ ecs_task_output.stdout }} --query 'tasks[0].healthStatus'
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ lookup('env', 'TF_VAR_aws_access_key') }}"
+        AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'TF_VAR_aws_secret_key') }}"
+      register: ecs_task_details_output
+
+    - name: Check task status
+      assert:
+        that:
+          - ecs_task_details_output.stdout == '"HEALTHY"'
+        success_msg: "The task is healthy"
+
+    - name: Get application status
+      shell: curl -o /dev/null -s -w "%{http_code}" http://{{ instance_public_ip }}:{{ gifmachine_api_port }}
+      register: application_status
+
+    - name: Check applcation status
+      debug:
+        msg: "Application HTTP response code: {{ application_status.stdout }}"
+      failed_when: application_status.stdout != '200'
+
+  rescue:
+    - name: Reached retry count
+      fail:
+        msg: "The task/application is not healthy"
+      when: task_retry_count | int == 10
+
+    - name: Retry {{ task_retry_count }}/10, waiting for 15 seconds before retrying...
+      wait_for:
+        timeout: 15
+
+    - name: Retrying task health check
+      include_tasks: tasks/task_health_check.yml

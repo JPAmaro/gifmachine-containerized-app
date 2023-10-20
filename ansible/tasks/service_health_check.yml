@@ -1,0 +1,43 @@
+---
+
+- name: Check {{ gifmachine_service }} health
+  block:
+    - name: Set the retry count
+      set_fact:
+        service_retry_count: "{{ 1 if service_retry_count is undefined else service_retry_count | int + 1 }}"
+
+    - name: Wait for service to be stable
+      shell: aws ecs wait services-stable --cluster {{ gifmachine_cluster }} --services {{ gifmachine_service }}
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ lookup('env', 'TF_VAR_aws_access_key') }}"
+        AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'TF_VAR_aws_secret_key') }}"
+
+    - name: Get {{ gifmachine_service }} information
+      ecs_service_info:
+        cluster: "{{ gifmachine_cluster }}"
+        service: "{{ gifmachine_service }}"
+        details: true
+        events: true
+        aws_access_key: "{{ lookup('env', 'TF_VAR_aws_access_key') }}"
+        aws_secret_key: "{{ lookup('env', 'TF_VAR_aws_secret_key') }}"
+      register: ecs_service_output
+
+    - name: Check {{ gifmachine_service }} status
+      assert:
+        that:
+          - ecs_service_output.services[0].status == 'ACTIVE'
+          - ecs_service_output.services[0].desiredCount == ecs_service_output.services[0].runningCount
+        success_msg: "The service is stable"
+
+  rescue:
+    - name: Reached retry count
+      fail:
+        msg: "The service is not stable"
+      when: service_retry_count | int == 10
+
+    - name: Retry {{ service_retry_count }}/10, waiting for 15 seconds before retrying...
+      wait_for:
+        timeout: 15
+
+    - name: Retrying service health check
+      include_tasks: tasks/service_health_check.yml

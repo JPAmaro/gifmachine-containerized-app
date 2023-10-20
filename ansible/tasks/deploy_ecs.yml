@@ -1,0 +1,76 @@
+---
+
+- name: Check if ECS service exists
+  ecs_service_info:
+    service: "{{ gifmachine_service }}"
+    cluster: "{{ gifmachine_cluster }}"
+    aws_access_key: "{{ lookup('env', 'TF_VAR_aws_access_key') }}"
+    aws_secret_key: "{{ lookup('env', 'TF_VAR_aws_secret_key') }}"
+  register: ecs_service_info
+  ignore_errors: true
+
+- block:
+  - name: Ensure previous ECS task is stopped
+    ecs_service:
+      name: "{{ gifmachine_service }}"
+      cluster: "{{ gifmachine_cluster }}"
+      desired_count: 0
+      state: present
+      force_new_deployment: true
+      aws_access_key: "{{ lookup('env', 'TF_VAR_aws_access_key') }}"
+      aws_secret_key: "{{ lookup('env', 'TF_VAR_aws_secret_key') }}"
+
+  - name: Wait for service to be stable
+    shell: aws ecs wait services-stable --cluster {{ gifmachine_cluster }} --services {{ gifmachine_service }}
+    environment:
+      AWS_ACCESS_KEY_ID: "{{ lookup('env', 'TF_VAR_aws_access_key') }}"
+      AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'TF_VAR_aws_secret_key') }}"
+  when: ecs_service_info.services | default([]) | length > 0
+
+- name: Define ECS task
+  ecs_taskdefinition:
+    family: gifmachine
+    state: present
+    execution_role_arn: "{{ ecs_execution_role_arn }}"
+    containers:
+      - name: gifmachine
+        image: "{{ ecr_repository_url }}:{{ image_tag }}"
+        memory: 128
+        essential: true
+        portMappings:
+          - containerPort: "{{ gifmachine_api_port }}"
+            hostPort: "{{ gifmachine_api_port }}"
+        logConfiguration:
+          logDriver: awslogs
+          options:
+            awslogs-group: "{{ gifmachine_cw_log_group }}"
+            awslogs-region: eu-west-1
+            awslogs-stream-prefix: awslogs-gifmachine
+        environment:
+          - name: "RACK_ENV"
+            value: "production"
+        secrets:
+          - name: "DATABASE_URL"
+            valueFrom: "arn:aws:ssm:eu-west-1:{{ account_id }}:parameter{{ database_url_parameter }}"
+          - name: "GIFMACHINE_PASSWORD"
+            valueFrom: "arn:aws:ssm:eu-west-1:{{ account_id }}:parameter{{ gifmachine_password_parameter }}"
+        healthCheck:
+          command: [ "CMD-SHELL", "curl http://localhost:{{ gifmachine_api_port }} || exit 1" ]
+          interval: 60
+          retries: 3
+          startPeriod: 15
+          timeout: 15
+    launch_type: EC2
+    aws_access_key: "{{ lookup('env', 'TF_VAR_aws_access_key') }}"
+    aws_secret_key: "{{ lookup('env', 'TF_VAR_aws_secret_key') }}"
+  register: new_ecs_task_def
+
+- name: Ensure ECS service is present
+  ecs_service:
+    name: "{{ gifmachine_service }}"
+    cluster: "{{ gifmachine_cluster }}"
+    task_definition: "{{ new_ecs_task_def.taskdefinition.family }}:{{ new_ecs_task_def.taskdefinition.revision }}"
+    desired_count: 1
+    state: present
+    aws_access_key: "{{ lookup('env', 'TF_VAR_aws_access_key') }}"
+    aws_secret_key: "{{ lookup('env', 'TF_VAR_aws_secret_key') }}"

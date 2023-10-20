@@ -1,0 +1,26 @@
+---
+
+- name: Build Docker image
+  docker_image:
+    name: image-gifmachine
+    tag: "{{ image_tag }}"
+    build:
+      path: ../image-gifmachine/
+    source: build
+    force_source: true
+
+- name: Retrieve ECR login details
+  shell: aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin {{ ecr_repository_url }}
+  register: ecr_login
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ lookup('env', 'TF_VAR_aws_access_key') }}"
+    AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'TF_VAR_aws_secret_key') }}"
+
+- name: Push image to ECR
+  docker_image:
+    name: image-gifmachine
+    tag: "{{ image_tag }}"
+    push: true
+    repository: "{{ ecr_repository_url }}"
+    force_tag: yes
+    source: local

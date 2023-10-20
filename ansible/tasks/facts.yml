@@ -1,0 +1,33 @@
+---
+
+- name: Get Terraform outputs
+  command: "terraform output -json"
+  register: tf_outputs
+  args:
+    chdir: ../terraform
+
+- name: Set facts
+  set_fact:
+    ecr_repository_url: "{{ (tf_outputs.stdout | from_json)['ecr_repository_url']['value'] }}"
+    database_url_parameter: "{{ (tf_outputs.stdout | from_json)['database_url_parameter']['value'] }}"
+    gifmachine_password_parameter: "{{ (tf_outputs.stdout | from_json)['gifmachine_password_parameter']['value'] }}"
+    account_id: "{{ (tf_outputs.stdout | from_json)['account_id']['value'] }}"
+    ecs_execution_role_arn: "{{ (tf_outputs.stdout | from_json)['ecs_execution_role_arn']['value'] }}"
+    gifmachine_api_port: "{{ (tf_outputs.stdout | from_json)['gifmachine_api_port']['value'] }}"
+    gifmachine_cluster: "{{ (tf_outputs.stdout | from_json)['gifmachine_cluster']['value'] }}"
+    gifmachine_cw_log_group: "{{ (tf_outputs.stdout | from_json)['gifmachine_cw_log_group']['value'] }}"
+    gifmachine_service: "gifmachine-service"
+    image_tag: "{{ ansible_date_time.epoch }}"
+
+- name: Fetch Instance Info
+  ec2_instance_info:
+    aws_access_key: "{{ lookup('env', 'TF_VAR_aws_access_key') }}"
+    aws_secret_key: "{{ lookup('env', 'TF_VAR_aws_secret_key') }}"
+    filters:
+      "tag:Name": "gifmachine"
+      instance-state-name: ["running"]
+  register: instance_info
+
+- name: Set Instance Public IP
+  set_fact:
+    instance_public_ip: "{{ (instance_info)['instances'][0]['public_ip_address'] }}"
